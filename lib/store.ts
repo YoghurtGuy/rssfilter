@@ -80,9 +80,18 @@ export async function appendLogs(
   await redis.expire(key, LOG_TTL);
 }
 
-export async function getLogs(id: string): Promise<FeedLogEntry[]> {
-  const raw = await redis.lrange<string | FeedLogEntry>(logKey(id), 0, -1);
-  return raw
+/** A page of logs (newest first) plus the total count for pagination. */
+export async function getLogs(
+  id: string,
+  offset = 0,
+  limit = 20,
+): Promise<{ logs: FeedLogEntry[]; total: number }> {
+  const key = logKey(id);
+  const [total, raw] = await Promise.all([
+    redis.llen(key),
+    redis.lrange<string | FeedLogEntry>(key, offset, offset + limit - 1),
+  ]);
+  const logs = raw
     .map((r) => {
       if (typeof r !== "string") return r as FeedLogEntry;
       try {
@@ -92,6 +101,7 @@ export async function getLogs(id: string): Promise<FeedLogEntry[]> {
       }
     })
     .filter((e): e is FeedLogEntry => e != null);
+  return { logs, total };
 }
 
 export async function clearLogs(id: string): Promise<void> {
