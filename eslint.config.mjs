@@ -5,6 +5,14 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  {
+    rules: {
+      // The parsed RSS/Atom tree is inherently dynamic (fast-xml-parser).
+      "@typescript-eslint/no-explicit-any": "off",
+      // Plain prose in JSX (apostrophes, etc.) is fine here.
+      "react/no-unescaped-entities": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
