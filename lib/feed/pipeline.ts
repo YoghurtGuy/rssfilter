@@ -1,7 +1,8 @@
 import { redis } from "../kv";
-import type { RssSource } from "../types";
+import { appendLogs } from "../store";
+import type { FeedLogEntry, RssSource } from "../types";
 import { classifyItems, translateTitles } from "../llm";
-import { rewriteImages } from "./images";
+import { rewriteImagesWithCount } from "./images";
 import {
   buildFeed,
   contentFields,
@@ -25,6 +26,8 @@ interface Decision {
   keep: boolean;
   /** Translated title, or null when translation is disabled. */
   title: string | null;
+  /** Short reason the item was dropped by the filter, or null. */
+  reason: string | null;
 }
 
 function djb2(str: string): string {
@@ -50,11 +53,19 @@ export async function transformFeed(
   if (!feed) return xml;
 
   const items = getItems(feed);
-  const useLlm = source.filter.enabled || source.translate.enabled;
+  // Original (pre-translation) titles, captured before any mutation.
+  const originalTitles = items.map((it) => getItemTitle(it));
+  // Per-item count of proxied images, keyed by item node.
+  const imgCount = new Map<XmlNode, number>();
 
-  const decisions = useLlm
-    ? await computeDecisions(items, feed.format, source)
-    : items.map<Decision>(() => ({ keep: true, title: null }));
+  // Always compute decisions: this populates the per-item cache that doubles as
+  // the "first seen at this version" signal driving logging, even when neither
+  // filter nor translate is enabled (then no LLM call is made).
+  const { decisions, freshIdx } = await computeDecisions(
+    items,
+    feed.format,
+    source,
+  );
 
   // 1. filter
   let kept = items;
@@ -83,9 +94,43 @@ export async function transformFeed(
       for (const field of fields) {
         if (it[field] == null) continue;
         const html = getText(it[field]);
-        const rewritten = rewriteImages(html, baseUrl, referer);
-        if (rewritten !== html) setText(it, field, rewritten);
+        const { html: rewritten, count } = rewriteImagesWithCount(
+          html,
+          baseUrl,
+          referer,
+        );
+        if (count > 0) {
+          setText(it, field, rewritten);
+          imgCount.set(it, (imgCount.get(it) ?? 0) + count);
+        }
       }
+    }
+  }
+
+  // Record one log entry per freshly-processed item. Fail open: never let a
+  // logging error affect the returned feed.
+  if (freshIdx.length > 0) {
+    const entries: FeedLogEntry[] = freshIdx.map((i) => {
+      const it = items[i];
+      const kept_ = !source.filter.enabled || decisions[i].keep;
+      return {
+        ts: Date.now(),
+        guid: itemGuid(it, feed.format),
+        title: originalTitles[i],
+        link: getText(it.link?.["@_href"] ?? it.link),
+        kept: kept_,
+        filtered: source.filter.enabled && !decisions[i].keep,
+        reason: decisions[i].reason,
+        translatedTitle:
+          kept_ && source.translate.enabled ? decisions[i].title : null,
+        imagesProxied: imgCount.get(it) ?? 0,
+        version: source.version,
+      };
+    });
+    try {
+      await appendLogs(source.id, entries);
+    } catch {
+      /* logging is best-effort */
     }
   }
 
@@ -97,7 +142,7 @@ async function computeDecisions(
   items: XmlNode[],
   format: "rss" | "atom",
   source: RssSource,
-): Promise<Decision[]> {
+): Promise<{ decisions: Decision[]; freshIdx: number[] }> {
   const guids = items.map((it) => itemGuid(it, format));
   const keys = guids.map((g) => cacheKey(source, g));
 
@@ -110,13 +155,15 @@ async function computeDecisions(
     /* cache miss path below */
   }
 
-  // Items that need fresh LLM work (cache miss), capped for cost/time.
+  // Items seen for the first time at this version (cache miss), capped for cost/time.
+  // This set also drives logging: each item is logged once per config version.
   const missIdx = items
     .map((_, i) => i)
     .filter((i) => !cached[i])
     .slice(0, MAX_LLM_ITEMS);
 
   const keepByIdx = new Map<number, boolean>();
+  const reasonByIdx = new Map<number, string | null>();
   const titleByIdx = new Map<number, string | null>();
 
   if (missIdx.length > 0) {
@@ -125,8 +172,11 @@ async function computeDecisions(
         title: getItemTitle(items[i]),
         summary: getText(items[i].description) || getText(items[i].summary),
       }));
-      const keep = await classifyItems(subset, source.filter.criteria ?? "");
-      missIdx.forEach((i, k) => keepByIdx.set(i, keep[k]));
+      const results = await classifyItems(subset, source.filter.criteria ?? "");
+      missIdx.forEach((i, k) => {
+        keepByIdx.set(i, results[k].keep);
+        reasonByIdx.set(i, results[k].reason);
+      });
     }
     if (source.translate.enabled) {
       const titles = missIdx.map((i) => getItemTitle(items[i]));
@@ -143,6 +193,7 @@ async function computeDecisions(
     return {
       keep: keepByIdx.get(i) ?? true,
       title: titleByIdx.has(i) ? titleByIdx.get(i)! : null,
+      reason: reasonByIdx.get(i) ?? null,
     };
   });
 
@@ -151,7 +202,7 @@ async function computeDecisions(
     missIdx.map((i) => redis.set(keys[i], decisions[i], { ex: CACHE_TTL })),
   );
 
-  return decisions;
+  return { decisions, freshIdx: missIdx };
 }
 
 function applyBranding(

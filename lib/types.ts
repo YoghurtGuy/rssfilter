@@ -44,6 +44,29 @@ export interface RssSource {
   updatedAt: number;
 }
 
+/** One per-item record of what the transform pipeline did to an RSS item. */
+export interface FeedLogEntry {
+  /** When the item was processed (ms). */
+  ts: number;
+  /** Stable item identity (guid/id/link/title). */
+  guid: string;
+  /** Original (pre-translation) title. */
+  title: string;
+  link: string;
+  /** Whether the item made it into the output feed. */
+  kept: boolean;
+  /** Filtering was enabled and this item was dropped. */
+  filtered: boolean;
+  /** Short reason the item was dropped (only when filtered out). */
+  reason: string | null;
+  /** Translated title, when translation produced one. */
+  translatedTitle: string | null;
+  /** Number of <img> in the item content rewritten to the proxy. */
+  imagesProxied: number;
+  /** Source config version this decision was made under. */
+  version: number;
+}
+
 /** Fields a client supplies when creating/updating a source. */
 export type SourceInput = Omit<
   RssSource,

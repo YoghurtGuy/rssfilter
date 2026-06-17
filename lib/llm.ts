@@ -18,6 +18,13 @@ export interface ClassifyItem {
   summary?: string;
 }
 
+export interface ClassifyResult {
+  /** true = keep the item; false = drop it. */
+  keep: boolean;
+  /** Short reason the item was dropped, or null when kept. */
+  reason: string | null;
+}
+
 async function chat(system: string, user: string): Promise<string | null> {
   if (!API_KEY) return null;
   try {
@@ -59,14 +66,18 @@ function parseJsonArray(text: string | null): unknown[] | null {
 }
 
 /**
- * Decide which items to keep. Returns a boolean per item (true = keep).
- * Fails open: keeps everything if the LLM is unavailable or misbehaves.
+ * Decide which items to keep, with a short reason for each dropped item.
+ * Returns one result per input item, in order.
+ * Fails open: keeps everything (no reason) if the LLM is unavailable or misbehaves.
  */
 export async function classifyItems(
   items: ClassifyItem[],
   criteria: string,
-): Promise<boolean[]> {
-  const keepAll = items.map(() => true);
+): Promise<ClassifyResult[]> {
+  const keepAll: ClassifyResult[] = items.map(() => ({
+    keep: true,
+    reason: null,
+  }));
   if (items.length === 0) return keepAll;
 
   const list = items
@@ -78,19 +89,29 @@ export async function classifyItems(
 
   const system =
     "You filter RSS feed items. The user describes what counts as an ad or " +
-    "low-value content. Return ONLY a JSON array of the integer indices that " +
-    "should be REMOVED. If nothing should be removed, return [].";
+    "low-value content. Return ONLY a JSON array of objects for the items that " +
+    'should be REMOVED, each as {"i": <integer index>, "reason": "<short reason ' +
+    'in the feed\'s language>"}. If nothing should be removed, return [].';
   const user = `Removal criteria: ${criteria || "advertisements and low-value content"}\n\nItems:\n${list}`;
 
   const arr = parseJsonArray(await chat(system, user));
   if (!arr) return keepAll;
 
-  const remove = new Set(
-    arr
-      .map((n) => (typeof n === "number" ? n : Number(n)))
-      .filter((n) => Number.isInteger(n)),
+  const reasonByIdx = new Map<number, string | null>();
+  for (const entry of arr) {
+    if (entry == null || typeof entry !== "object") continue;
+    const o = entry as Record<string, unknown>;
+    const i = typeof o.i === "number" ? o.i : Number(o.i);
+    if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
+    const reason = typeof o.reason === "string" && o.reason.trim() ? o.reason.trim() : null;
+    reasonByIdx.set(i, reason);
+  }
+
+  return items.map((_, i) =>
+    reasonByIdx.has(i)
+      ? { keep: false, reason: reasonByIdx.get(i) ?? null }
+      : { keep: true, reason: null },
   );
-  return items.map((_, i) => !remove.has(i));
 }
 
 /**

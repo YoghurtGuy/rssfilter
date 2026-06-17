@@ -81,6 +81,13 @@ export function SourcesList() {
               <div className="flex shrink-0 gap-2">
                 <Button
                   size="sm"
+                  variant="ghost"
+                  onPress={() => router.push(`/sources/${s.id}/logs`)}
+                >
+                  日志
+                </Button>
+                <Button
+                  size="sm"
                   variant="secondary"
                   onPress={() => router.push(`/sources/${s.id}`)}
                 >
