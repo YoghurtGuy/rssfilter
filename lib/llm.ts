@@ -9,9 +9,12 @@
  * the feed unchanged, so a transformed feed never breaks because the LLM is down.
  */
 
+import type { LlmLogError, LlmLogStatus } from "./types";
+
 const BASE_URL = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 const API_KEY = process.env.OPENAI_API_KEY ?? "";
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+const MAX_RAW_CHARS = 4000;
 
 export interface ClassifyItem {
   title: string;
@@ -25,8 +28,40 @@ export interface ClassifyResult {
   reason: string | null;
 }
 
-async function chat(system: string, user: string): Promise<string | null> {
-  if (!API_KEY) return null;
+export interface LlmCallInfo {
+  model: string;
+  called: boolean;
+  parsed: boolean;
+  status: LlmLogStatus;
+  raw: string | null;
+  error?: LlmLogError | null;
+}
+
+export interface ClassifyResponse extends LlmCallInfo {
+  results: ClassifyResult[];
+}
+
+export interface TranslateResponse extends LlmCallInfo {
+  results: string[];
+}
+
+function truncateRaw(raw: string | null): string | null {
+  if (!raw || raw.length <= MAX_RAW_CHARS) return raw;
+  return `${raw.slice(0, MAX_RAW_CHARS)}\n…[truncated]`;
+}
+
+async function chat(system: string, user: string): Promise<LlmCallInfo> {
+  if (!API_KEY) {
+    return {
+      model: MODEL,
+      called: false,
+      parsed: false,
+      status: "fail-open",
+      raw: null,
+      error: { message: "OPENAI_API_KEY is not configured" },
+    };
+  }
+
   try {
     const res = await fetch(`${BASE_URL}/chat/completions`, {
       method: "POST",
@@ -43,11 +78,41 @@ async function chat(system: string, user: string): Promise<string | null> {
         ],
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = truncateRaw(await res.text().catch(() => null));
+      return {
+        model: MODEL,
+        called: true,
+        parsed: false,
+        status: "request-error",
+        raw: null,
+        error: {
+          message: `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`,
+          httpStatus: res.status,
+          responseStatusText: res.statusText,
+          responseBody: body,
+        },
+      };
+    }
     const data = await res.json();
-    return data?.choices?.[0]?.message?.content ?? null;
-  } catch {
-    return null;
+    return {
+      model: MODEL,
+      called: true,
+      parsed: false,
+      status: "success",
+      raw: truncateRaw(data?.choices?.[0]?.message?.content ?? null),
+    };
+  } catch (err) {
+    return {
+      model: MODEL,
+      called: true,
+      parsed: false,
+      status: "request-error",
+      raw: null,
+      error: {
+        message: err instanceof Error ? err.message : String(err),
+      },
+    };
   }
 }
 
@@ -73,12 +138,21 @@ function parseJsonArray(text: string | null): unknown[] | null {
 export async function classifyItems(
   items: ClassifyItem[],
   criteria: string,
-): Promise<ClassifyResult[]> {
+): Promise<ClassifyResponse> {
   const keepAll: ClassifyResult[] = items.map(() => ({
     keep: true,
     reason: null,
   }));
-  if (items.length === 0) return keepAll;
+  if (items.length === 0) {
+    return {
+      results: keepAll,
+      model: MODEL,
+      called: false,
+      parsed: true,
+      status: "success",
+      raw: null,
+    };
+  }
 
   const list = items
     .map(
@@ -94,8 +168,16 @@ export async function classifyItems(
     'in the feed\'s language>"}. If nothing should be removed, return [].';
   const user = `Removal criteria: ${criteria || "advertisements and low-value content"}\n\nItems:\n${list}`;
 
-  const arr = parseJsonArray(await chat(system, user));
-  if (!arr) return keepAll;
+  const info = await chat(system, user);
+  const arr = parseJsonArray(info.raw);
+  if (!arr) {
+    return {
+      ...info,
+      results: keepAll,
+      parsed: false,
+      status: info.status === "success" ? "parse-error" : info.status,
+    };
+  }
 
   const reasonByIdx = new Map<number, string | null>();
   for (const entry of arr) {
@@ -103,15 +185,23 @@ export async function classifyItems(
     const o = entry as Record<string, unknown>;
     const i = typeof o.i === "number" ? o.i : Number(o.i);
     if (!Number.isInteger(i) || i < 0 || i >= items.length) continue;
-    const reason = typeof o.reason === "string" && o.reason.trim() ? o.reason.trim() : null;
+    const reason =
+      typeof o.reason === "string" && o.reason.trim()
+        ? o.reason.trim()
+        : null;
     reasonByIdx.set(i, reason);
   }
 
-  return items.map((_, i) =>
-    reasonByIdx.has(i)
-      ? { keep: false, reason: reasonByIdx.get(i) ?? null }
-      : { keep: true, reason: null },
-  );
+  return {
+    ...info,
+    results: items.map((_, i) =>
+      reasonByIdx.has(i)
+        ? { keep: false, reason: reasonByIdx.get(i) ?? null }
+        : { keep: true, reason: null },
+    ),
+    parsed: true,
+    status: "success",
+  };
 }
 
 /**
@@ -121,8 +211,17 @@ export async function classifyItems(
 export async function translateTitles(
   titles: string[],
   targetLang: string,
-): Promise<string[]> {
-  if (titles.length === 0) return titles;
+): Promise<TranslateResponse> {
+  if (titles.length === 0) {
+    return {
+      results: titles,
+      model: MODEL,
+      called: false,
+      parsed: true,
+      status: "success",
+      raw: null,
+    };
+  }
 
   const system =
     `Translate each RSS title into ${targetLang || "the target language"}. ` +
@@ -130,7 +229,23 @@ export async function translateTitles(
     "Do not add commentary. Keep proper nouns/code untranslated when natural.";
   const user = JSON.stringify(titles);
 
-  const arr = parseJsonArray(await chat(system, user));
-  if (!arr || arr.length !== titles.length) return titles;
-  return arr.map((t, i) => (typeof t === "string" && t.trim() ? t : titles[i]));
+  const info = await chat(system, user);
+  const arr = parseJsonArray(info.raw);
+  if (!arr || arr.length !== titles.length) {
+    return {
+      ...info,
+      results: titles,
+      parsed: false,
+      status: info.status === "success" ? "parse-error" : info.status,
+    };
+  }
+
+  return {
+    ...info,
+    results: arr.map((t, i) =>
+      typeof t === "string" && t.trim() ? t : titles[i],
+    ),
+    parsed: true,
+    status: "success",
+  };
 }

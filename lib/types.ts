@@ -44,6 +44,32 @@ export interface RssSource {
   updatedAt: number;
 }
 
+export type LlmLogStatus =
+  | "disabled"
+  | "cache-hit"
+  | "success"
+  | "parse-error"
+  | "request-error"
+  | "fail-open";
+
+export interface LlmLogError {
+  message: string;
+  httpStatus?: number;
+  responseStatusText?: string;
+  responseBody?: string | null;
+}
+
+export interface LlmLogDetail {
+  model: string;
+  called: boolean;
+  cacheHit: boolean;
+  parsed: boolean;
+  status: LlmLogStatus;
+  raw: string | null;
+  error?: LlmLogError | null;
+  structured: Record<string, unknown>;
+}
+
 /** One per-item record of what the transform pipeline did to an RSS item. */
 export interface FeedLogEntry {
   /** When the item was processed (ms). */
@@ -65,6 +91,11 @@ export interface FeedLogEntry {
   imagesProxied: number;
   /** Source config version this decision was made under. */
   version: number;
+  /** Optional LLM diagnostics. Older logs may not include this field. */
+  llm?: {
+    filter?: LlmLogDetail;
+    translate?: LlmLogDetail;
+  };
 }
 
 /** Fields a client supplies when creating/updating a source. */

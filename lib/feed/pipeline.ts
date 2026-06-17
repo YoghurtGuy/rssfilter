@@ -1,6 +1,6 @@
 import { redis } from "../kv";
 import { appendLogs } from "../store";
-import type { FeedLogEntry, RssSource } from "../types";
+import type { FeedLogEntry, LlmLogDetail, RssSource } from "../types";
 import { classifyItems, translateTitles } from "../llm";
 import { rewriteImagesWithCount } from "./images";
 import {
@@ -28,6 +28,8 @@ interface Decision {
   title: string | null;
   /** Short reason the item was dropped by the filter, or null. */
   reason: string | null;
+  filterLlm: LlmLogDetail;
+  translateLlm: LlmLogDetail;
 }
 
 function djb2(str: string): string {
@@ -38,6 +40,49 @@ function djb2(str: string): string {
 
 function cacheKey(source: RssSource, guid: string): string {
   return `tf:${source.id}:${source.version}:${djb2(guid)}`;
+}
+
+function disabledLlmDetail(kind: "filter" | "translate"): LlmLogDetail {
+  return {
+    model: "",
+    called: false,
+    cacheHit: false,
+    parsed: false,
+    status: "disabled",
+    raw: null,
+    structured:
+      kind === "filter"
+        ? { keep: true, reason: null }
+        : { translatedTitle: null },
+  };
+}
+
+function cacheHit(detail: LlmLogDetail): LlmLogDetail {
+  return { ...detail, cacheHit: true, status: "cache-hit" };
+}
+
+function cachedFallback(kind: "filter" | "translate", d: Decision): LlmLogDetail {
+  return {
+    ...disabledLlmDetail(kind),
+    cacheHit: true,
+    status: "cache-hit",
+    structured:
+      kind === "filter"
+        ? { keep: d.keep, reason: d.reason }
+        : { translatedTitle: d.title },
+  };
+}
+
+function normalizeCachedDecision(d: Decision): Decision {
+  return {
+    keep: d.keep,
+    title: d.title ?? null,
+    reason: d.reason ?? null,
+    filterLlm: d.filterLlm ? cacheHit(d.filterLlm) : cachedFallback("filter", d),
+    translateLlm: d.translateLlm
+      ? cacheHit(d.translateLlm)
+      : cachedFallback("translate", d),
+  };
 }
 
 /**
@@ -125,6 +170,10 @@ export async function transformFeed(
           kept_ && source.translate.enabled ? decisions[i].title : null,
         imagesProxied: imgCount.get(it) ?? 0,
         version: source.version,
+        llm: {
+          filter: decisions[i].filterLlm,
+          translate: decisions[i].translateLlm,
+        },
       };
     });
     try {
@@ -165,6 +214,8 @@ async function computeDecisions(
   const keepByIdx = new Map<number, boolean>();
   const reasonByIdx = new Map<number, string | null>();
   const titleByIdx = new Map<number, string | null>();
+  const filterLlmByIdx = new Map<number, LlmLogDetail>();
+  const translateLlmByIdx = new Map<number, LlmLogDetail>();
 
   if (missIdx.length > 0) {
     if (source.filter.enabled) {
@@ -172,28 +223,61 @@ async function computeDecisions(
         title: getItemTitle(items[i]),
         summary: getText(items[i].description) || getText(items[i].summary),
       }));
-      const results = await classifyItems(subset, source.filter.criteria ?? "");
+      const response = await classifyItems(subset, source.filter.criteria ?? "");
       missIdx.forEach((i, k) => {
-        keepByIdx.set(i, results[k].keep);
-        reasonByIdx.set(i, results[k].reason);
+        const result = response.results[k];
+        keepByIdx.set(i, result.keep);
+        reasonByIdx.set(i, result.reason);
+        filterLlmByIdx.set(i, {
+          model: response.model,
+          called: response.called,
+          cacheHit: false,
+          parsed: response.parsed,
+          status: response.status,
+          raw: response.raw,
+          error: response.error,
+          structured: { keep: result.keep, reason: result.reason },
+        });
       });
     }
     if (source.translate.enabled) {
       const titles = missIdx.map((i) => getItemTitle(items[i]));
-      const translated = await translateTitles(
+      const response = await translateTitles(
         titles,
         source.translate.targetLang ?? "",
       );
-      missIdx.forEach((i, k) => titleByIdx.set(i, translated[k]));
+      missIdx.forEach((i, k) => {
+        const translatedTitle = response.results[k];
+        titleByIdx.set(i, translatedTitle);
+        translateLlmByIdx.set(i, {
+          model: response.model,
+          called: response.called,
+          cacheHit: false,
+          parsed: response.parsed,
+          status: response.status,
+          raw: response.raw,
+          error: response.error,
+          structured: {
+            originalTitle: titles[k],
+            translatedTitle,
+          },
+        });
+      });
     }
   }
 
   const decisions: Decision[] = items.map((_, i) => {
-    if (cached[i]) return cached[i] as Decision;
+    if (cached[i]) return normalizeCachedDecision(cached[i] as Decision);
     return {
       keep: keepByIdx.get(i) ?? true,
       title: titleByIdx.has(i) ? titleByIdx.get(i)! : null,
       reason: reasonByIdx.get(i) ?? null,
+      filterLlm: source.filter.enabled
+        ? (filterLlmByIdx.get(i) ?? disabledLlmDetail("filter"))
+        : disabledLlmDetail("filter"),
+      translateLlm: source.translate.enabled
+        ? (translateLlmByIdx.get(i) ?? disabledLlmDetail("translate"))
+        : disabledLlmDetail("translate"),
     };
   });
 

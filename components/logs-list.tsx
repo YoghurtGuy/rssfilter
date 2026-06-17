@@ -118,12 +118,6 @@ export function LogsList({ sourceId }: { sourceId: string }) {
               </span>
             </div>
 
-            {l.filtered && l.reason && (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">
-                原因：{l.reason}
-              </p>
-            )}
-
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
               <span>{formatTime(l.ts)}</span>
               {l.imagesProxied > 0 && <span>图片代理 {l.imagesProxied}</span>}
@@ -136,6 +130,11 @@ export function LogsList({ sourceId }: { sourceId: string }) {
                 >
                   原文
                 </a>
+              )}
+              {l.filtered && l.reason && (
+                <span className="text-red-600 dark:text-red-400">
+                  原因：{l.reason}
+                </span>
               )}
             </div>
           </Card>
