@@ -30,8 +30,7 @@ export function normalizeSourceInput(body: unknown): SourceInput | null {
     },
     imageProxy: {
       enabled: Boolean(b.imageProxy?.enabled),
-      refererPolicy:
-        b.imageProxy?.refererPolicy === "original" ? "original" : "empty",
+      referer: str(b.imageProxy?.referer),
     },
   };
 }

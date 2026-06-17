@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card } from "@heroui/react";
-import { Field, TextAreaField, Toggle, ToggleRow } from "./ui";
+import { Field, TextAreaField, Toggle } from "./ui";
 import { emptySourceInput, type RssSource, type SourceInput } from "@/lib/types";
 
 function Section({
@@ -158,12 +158,12 @@ export function SourceForm({ initial }: { initial?: RssSource }) {
         enabled={data.imageProxy.enabled}
         onToggle={(v) => patch("imageProxy", { enabled: v })}
       >
-        <ToggleRow
-          label="使用原站点作为 Referer（默认置空）"
-          isSelected={data.imageProxy.refererPolicy === "original"}
-          onChange={(v) =>
-            patch("imageProxy", { refererPolicy: v ? "original" : "empty" })
-          }
+        <Field
+          label="自定义 Referer"
+          value={data.imageProxy.referer ?? ""}
+          onChange={(v) => patch("imageProxy", { referer: v })}
+          placeholder="留空则不发送 Referer，例如 https://mp.weixin.qq.com/"
+          type="url"
         />
       </Section>
 

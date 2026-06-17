@@ -18,7 +18,7 @@ function isBlockedHost(hostname: string): boolean {
 
 export async function GET(req: NextRequest) {
   const u = req.nextUrl.searchParams.get("u");
-  const policy = req.nextUrl.searchParams.get("r"); // "origin" or absent (= empty)
+  const ref = req.nextUrl.searchParams.get("ref"); // custom Referer, or absent (= none)
 
   if (!u || !/^https?:\/\//i.test(u)) {
     return new Response("Bad image url", { status: 400 });
@@ -38,8 +38,8 @@ export async function GET(req: NextRequest) {
     "user-agent": "Mozilla/5.0 (rssfilter image proxy)",
     accept: "image/*,*/*;q=0.8",
   };
-  // policy "empty" => send no Referer at all; "origin" => the image's own origin.
-  if (policy === "origin") headers["referer"] = `${target.protocol}//${target.host}/`;
+  // A custom Referer (the article/site URL) when provided; otherwise none.
+  if (ref) headers["referer"] = ref;
 
   let res: Response;
   try {

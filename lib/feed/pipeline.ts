@@ -77,13 +77,13 @@ export async function transformFeed(
 
   // 4. image proxy
   if (source.imageProxy.enabled) {
-    const policy = source.imageProxy.refererPolicy;
+    const referer = source.imageProxy.referer;
     const fields = contentFields(feed.format);
     for (const it of kept) {
       for (const field of fields) {
         if (it[field] == null) continue;
         const html = getText(it[field]);
-        const rewritten = rewriteImages(html, baseUrl, policy);
+        const rewritten = rewriteImages(html, baseUrl, referer);
         if (rewritten !== html) setText(it, field, rewritten);
       }
     }

@@ -14,9 +14,9 @@ Four transforms, each toggleable per source:
 3. **Branding override** — replace the feed's title, site link, and icon/image.
 4. **Image proxy** — rewrite each `<img src>` in item content to point at our proxy
    endpoint (with the real image URL passed as a param). The proxy then fetches the
-   original image server-side with the `Referer` header **emptied** (or set to the
-   original article URL, per source config), defeating hotlink protection, and streams
-   the bytes back. The reader only ever sees the proxy URL.
+   original image server-side with the `Referer` header **emptied by default** or set to
+   the per-source custom Referer URL, defeating hotlink protection, and streams the bytes
+   back. The reader only ever sees the proxy URL.
 
 All four are configured per RSS source from the frontend; there is no global on/off.
 
@@ -69,8 +69,9 @@ The serving path (public) and the config path (auth-gated) are separate concerns
   - `lib/feed/images.ts` — rewrites `<img src>` in content HTML to the proxy URL (drops `srcset`).
   - Filter+translate decisions are cached in KV keyed by `guid + source.version`; LLM work is
     capped at `MAX_LLM_ITEMS` per poll.
-- **Image proxy** — `app/api/img/route.ts`: server-side fetch of the target image with `Referer`
-  emptied (or origin, per `?r=origin`), streamed back. Has an SSRF host blocklist.
+- **Image proxy** — `app/api/img/route.ts`: server-side fetch of the target image with no
+  `Referer` by default, or the per-source custom Referer carried as `?ref=...`; streams bytes
+  back. Has an SSRF host blocklist.
 - **Config API** — `app/api/sources/route.ts` (GET list / POST create) and `.../[id]/route.ts`
   (GET/PUT/DELETE). Input is normalized via `lib/validate.ts`. `lib/store.ts` is the only KV gateway.
 - **Config UI** — `app/page.tsx` (list, client `components/sources-list.tsx`), `app/sources/new`
@@ -86,6 +87,7 @@ The serving path (public) and the config path (auth-gated) are separate concerns
   every poll is expensive. Cache transform results (keyed by item guid + config version) in KV.
 - **Feed validity is non-negotiable.** A subscriber's reader breaks if the output isn't valid
   RSS/Atom. Preserve required elements; when a transform fails, degrade to passthrough.
-- **Referer policy is the whole point of the image proxy** — default to an **empty**
-  `Referer` when fetching the original image; allow per-source override to the original
-  article URL. Get this wrong and hotlink protection still blocks the images.
+- **Referer policy is the whole point of the image proxy** — default to sending **no**
+  `Referer` when fetching the original image; allow each source to provide a custom Referer
+  URL (often the article site, e.g. `https://mp.weixin.qq.com/`). Get this wrong and hotlink
+  protection still blocks the images.

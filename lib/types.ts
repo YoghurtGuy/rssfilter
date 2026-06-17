@@ -1,5 +1,3 @@
-export type RefererPolicy = "empty" | "original";
-
 export interface RssSource {
   /** nanoid; appears in the public feed URL (/api/feed/<id>). */
   id: string;
@@ -32,8 +30,12 @@ export interface RssSource {
   /** Image proxy to defeat hotlink protection. */
   imageProxy: {
     enabled: boolean;
-    /** "empty" sends no Referer; "original" sends the article/site URL. */
-    refererPolicy: RefererPolicy;
+    /**
+     * Custom Referer sent when fetching the original image. Empty string sends
+     * NO Referer header. Set it to the article/site URL the image is embedded
+     * in (e.g. https://mp.weixin.qq.com/) to satisfy hotlink protection.
+     */
+    referer: string;
   };
 
   /** Bumped on every edit; invalidates the per-item transform cache. */
@@ -55,6 +57,6 @@ export function emptySourceInput(): SourceInput {
     filter: { enabled: false, criteria: "" },
     translate: { enabled: false, targetLang: "" },
     branding: { enabled: false, title: "", siteUrl: "", iconUrl: "" },
-    imageProxy: { enabled: false, refererPolicy: "empty" },
+    imageProxy: { enabled: false, referer: "" },
   };
 }
