@@ -1,23 +1,27 @@
 "use client";
 
 import { Input, Label, Switch, TextArea, TextField } from "@heroui/react";
-import type { ReactNode } from "react";
+import type { FocusEventHandler, ReactNode } from "react";
 
 /** Single-line labelled text field. */
 export function Field({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   type = "text",
   isRequired,
+  endContent,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  onBlur?: FocusEventHandler<HTMLInputElement>;
   placeholder?: string;
   type?: string;
   isRequired?: boolean;
+  endContent?: ReactNode;
 }) {
   return (
     <TextField
@@ -28,7 +32,19 @@ export function Field({
       className="flex flex-col gap-1.5"
     >
       <Label>{label}</Label>
-      <Input placeholder={placeholder} variant="secondary" />
+      <div className="relative">
+        <Input
+          placeholder={placeholder}
+          variant="secondary"
+          onBlur={onBlur}
+          className={endContent ? "pr-10" : undefined}
+        />
+        {endContent ? (
+          <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+            {endContent}
+          </span>
+        ) : null}
+      </div>
     </TextField>
   );
 }
