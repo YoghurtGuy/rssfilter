@@ -30,6 +30,23 @@ function pageNumbers(page: number, totalPages: number): (number | "ellipsis")[] 
   return pages;
 }
 
+async function fetchLogs(
+  sourceId: string,
+  page: number,
+): Promise<{
+  logs: FeedLogEntry[];
+  total: number;
+}> {
+  const res = await fetch(
+    `/api/sources/${sourceId}/logs?page=${page}&pageSize=${PAGE_SIZE}`,
+  );
+  const data = await res.json();
+  return {
+    logs: data.logs ?? [],
+    total: data.total ?? 0,
+  };
+}
+
 export function LogsList({ sourceId }: { sourceId: string }) {
   const router = useRouter();
   const [logs, setLogs] = useState<FeedLogEntry[] | null>(null);
@@ -37,17 +54,23 @@ export function LogsList({ sourceId }: { sourceId: string }) {
   const [page, setPage] = useState(1);
 
   async function load(p: number) {
-    const res = await fetch(
-      `/api/sources/${sourceId}/logs?page=${p}&pageSize=${PAGE_SIZE}`,
-    );
-    const data = await res.json();
-    setLogs(data.logs ?? []);
-    setTotal(data.total ?? 0);
+    const data = await fetchLogs(sourceId, p);
+    setLogs(data.logs);
+    setTotal(data.total);
   }
 
   useEffect(() => {
-    load(page);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let ignore = false;
+
+    fetchLogs(sourceId, page).then((data) => {
+      if (ignore) return;
+      setLogs(data.logs);
+      setTotal(data.total);
+    });
+
+    return () => {
+      ignore = true;
+    };
   }, [sourceId, page]);
 
   async function clear() {

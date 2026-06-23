@@ -19,14 +19,26 @@ export function SourcesList() {
   const [sources, setSources] = useState<RssSource[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  async function load() {
+  async function fetchSources(): Promise<RssSource[]> {
     const res = await fetch("/api/sources");
     const data = await res.json();
-    setSources(data.sources ?? []);
+    return data.sources ?? [];
+  }
+
+  async function reload() {
+    setSources(await fetchSources());
   }
 
   useEffect(() => {
-    load();
+    let ignore = false;
+
+    fetchSources().then((nextSources) => {
+      if (!ignore) setSources(nextSources);
+    });
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   function feedUrl(id: string): string {
@@ -43,7 +55,7 @@ export function SourcesList() {
   async function remove(id: string) {
     if (!confirm("确定删除这个源吗？")) return;
     await fetch(`/api/sources/${id}`, { method: "DELETE" });
-    load();
+    reload();
   }
 
   if (!sources) {
