@@ -3,6 +3,7 @@ import { appendLogs } from "../store";
 import type { FeedLogEntry, LlmLogDetail, RssSource } from "../types";
 import { classifyItems, translateTitles } from "../llm";
 import { rewriteImagesWithCount } from "./images";
+import { discoverFaviconUrl, ensureFeedIcon, feedHasIcon, siteUrlFromFeed } from "./favicon";
 import {
   buildFeed,
   contentFields,
@@ -128,10 +129,19 @@ export async function transformFeed(
     }
   }
 
-  // 3. branding (channel/feed level)
+  // 3. favicon discovery (channel/feed level)
+  if (!source.branding.iconUrl && !feedHasIcon(feed)) {
+    const siteUrl = siteUrlFromFeed(feed);
+    if (siteUrl) {
+      const iconUrl = await discoverFaviconUrl(siteUrl);
+      if (iconUrl) ensureFeedIcon(feed, iconUrl);
+    }
+  }
+
+  // 4. branding (channel/feed level)
   if (source.branding.enabled) applyBranding(feed.container, feed.format, source);
 
-  // 4. image proxy
+  // 5. image proxy
   if (source.imageProxy.enabled) {
     const referer = source.imageProxy.referer;
     const fields = contentFields(feed.format);
