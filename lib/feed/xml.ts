@@ -16,7 +16,12 @@ const XML_OPTS = {
 } as const;
 
 const parser = new XMLParser(XML_OPTS);
-const builder = new XMLBuilder({ ...XML_OPTS, format: false, suppressEmptyNode: false });
+const builder = new XMLBuilder({
+  ...XML_OPTS,
+  format: false,
+  suppressEmptyNode: false,
+  suppressBooleanAttributes: false,
+});
 
 export type FeedFormat = "rss" | "atom";
 // A loose object tree from fast-xml-parser.
